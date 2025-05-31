@@ -1,5 +1,8 @@
 #!/bin/bash
 
+echo "[+] Made By: Raulitos"
+echo "[+] Github https://github.com/r4vl1t0/HTBAutoRecon"
+
 # Verificar que se proporcione una IP
 if [ $# -eq 0 ]; then
     echo "[!] Uso: $0 <IP_TARGET>"
