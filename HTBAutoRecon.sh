@@ -20,6 +20,7 @@ TARGET_DOM="$1"
 TARGET_IP="$2"
 DIRFILE="$3"
 SUB_TMP="$4"
+PROTO="$5"
 
 FUZZ_TARGET="${TARGET_DOM:-$TARGET_IP}"
 WORDLIST_DIRS="/usr/share/seclists/Discovery/Web-Content/common.txt"
@@ -28,24 +29,21 @@ WORDLIST_SUBS="/usr/share/seclists/Discovery/DNS/bitquark-subdomains-top100000.t
 > "$DIRFILE"
 > "$SUB_TMP"
 
-# Fuzzing de directorios principal → directo a Directorios.full
-printf "=== http://$FUZZ_TARGET/ ===\n" >> "$DIRFILE"
+printf "=== $PROTO://$FUZZ_TARGET/ ===\n" >> "$DIRFILE"
 ffuf -s -c -w "$WORDLIST_DIRS" \
-    -u "http://$FUZZ_TARGET/FUZZ" \
+    -u "$PROTO://$FUZZ_TARGET/FUZZ" \
     -ac | while IFS= read -r word; do
     [ -z "$word" ] && continue
-    echo "http://$FUZZ_TARGET/$word" >> "$DIRFILE"
+    echo "$PROTO://$FUZZ_TARGET/$word" >> "$DIRFILE"
 done
 
-# Fuzzing de subdominios → subdominio.tmp
 [ -z "$TARGET_DOM" ] && exit 0
 
 ffuf -s -c -w "$WORDLIST_SUBS" \
-    -u "http://$TARGET_DOM/" \
+    -u "$PROTO://$TARGET_DOM/" \
     -H "Host: FUZZ.$TARGET_DOM" \
     -ac >> "$SUB_TMP" &
 
-# Leer subdominio.tmp en tiempo real y lanzar dir-fuzzing en paralelo por cada uno
 tail -f "$SUB_TMP" | while IFS= read -r sub; do
     [ -z "$sub" ] && continue
     FULL_SUB="$sub.$TARGET_DOM"
@@ -55,12 +53,12 @@ tail -f "$SUB_TMP" | while IFS= read -r sub; do
     fi
 
     (
-        printf "\n=== http://$FULL_SUB/ ===\n" >> "$DIRFILE"
+        printf "\n=== $PROTO://$FULL_SUB/ ===\n" >> "$DIRFILE"
         ffuf -s -c -w "$WORDLIST_DIRS" \
-            -u "http://$FULL_SUB/FUZZ" \
+            -u "$PROTO://$FULL_SUB/FUZZ" \
             -ac | while IFS= read -r path; do
             [ -z "$path" ] && continue
-            echo "http://$FULL_SUB/$path" >> "$DIRFILE"
+            echo "$PROTO://$FULL_SUB/$path" >> "$DIRFILE"
         done
     ) &
 done
@@ -72,7 +70,7 @@ TmuxInvoke_Linux() {
     SESSION_NAME="htb_scan_linux"
 
     WriteHelperScript
-    bash /tmp/htb_fuzz.sh "$TARGET_DOM" "$TARGET_IP" "$DIRFILE" "$SUB_TMP" &
+    bash /tmp/htb_fuzz.sh "$TARGET_DOM" "$TARGET_IP" "$DIRFILE" "$SUB_TMP" "$PROTO" &
 
     tmux new-session -d -s $SESSION_NAME
     tmux split-window -h -t $SESSION_NAME:0.0
@@ -89,7 +87,7 @@ TmuxInvoke_Windows() {
     SESSION_NAME="htb_scan_windows"
 
     WriteHelperScript
-    bash /tmp/htb_fuzz.sh "$TARGET_DOM" "$TARGET_IP" "$DIRFILE" "$SUB_TMP" &
+    bash /tmp/htb_fuzz.sh "$TARGET_DOM" "$TARGET_IP" "$DIRFILE" "$SUB_TMP" "$PROTO" &
 
     tmux new-session -d -s $SESSION_NAME
     tmux split-window -h -t $SESSION_NAME:0.0
@@ -122,7 +120,11 @@ PingSo() {
 }
 
 TakingDomain_Linux() {
-    TARGET_DOM=$(curl -i -k $TARGET_IP --silent | grep "Location" | cut -d "/" -f 3 | tr -d '\r\n')
+    LOCATION=$(curl -i -k $TARGET_IP --silent | grep -i "Location:")
+    PROTO=$(echo "$LOCATION" | grep -oP 'https?(?=://)')
+    TARGET_DOM=$(echo "$LOCATION" | cut -d "/" -f 3 | tr -d '\r\n')
+    PROTO="${PROTO:-http}"
+    echo "[+] Protocolo detectado: $PROTO"
     echo "[+] El dominio es: ${TARGET_DOM:-'(ninguno detectado, se usará la IP)'}"
     if [ -n "$TARGET_DOM" ]; then
         if grep -q "$TARGET_IP" /etc/hosts; then
@@ -136,6 +138,7 @@ TakingDomain_Linux() {
 
 TakingDomain_Windows() {
     TARGET_DOM=$(nxc smb $TARGET_IP -u "$User_Windows" -p "$Pass_Windows" | grep "domain" | cut -d ":" -f 3 | cut -d ")" -f 1 | tr -d ' ')
+    PROTO="http"
     echo "[+] Comprobando si está correcto..."
     echo "[+] El dominio es: $TARGET_DOM"
     if grep -q "$TARGET_IP" /etc/hosts; then
@@ -191,4 +194,4 @@ elif [ "$OSType" == "WINDOWS" ]; then
 fi
 
 sleep 3
-tmux attach-session -t $SESSION_NAME  
+tmux attach-session -t $SESSION_NAME
